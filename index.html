@@ -1,1 +1,139 @@
+<?php 
+require 'config/db.php'; 
+require 'config/security.php';
 
+// Check remember me
+checkRememberMe();
+
+if ($_GET['action'] ?? '') {
+    // API-like filters
+    $where = ['1=1'];
+    $params = [];
+    
+    if (isset($_GET['q']) && $_GET['q']) {
+        $where[] = 'title LIKE ?';
+        $params[] = '%' . $_GET['q'] . '%';
+    }
+    if (isset($_GET['cat']) && in_array($_GET['cat'], ['Fortnite', 'Roblox'])) {
+        $where[] = 'category = ?';
+        $params[] = $_GET['cat'];
+    }
+    if (isset($_GET['price_min'])) {
+        $where[] = 'price >= ?';
+        $params[] = $_GET['price_min'];
+    }
+    if (isset($_GET['price_max'])) {
+        $where[] = 'price <= ?';
+        $params[] = $_GET['price_max'];
+    }
+    
+    $order = match($_GET['sort'] ?? 'date') {
+        'price_asc' => 'price ASC',
+        'price_desc' => 'price DESC',
+        default => 'created_at DESC'
+    };
+    
+    $stmt = $pdo->prepare("SELECT * FROM annonces WHERE " . implode(' AND ', $where) . " AND status='active' ORDER BY $order LIMIT 50");
+    $stmt->execute($params);
+    $annonces = $stmt->fetchAll();
+    
+    header('Content-Type: application/json');
+    echo json_encode($annonces);
+    exit;
+}
+
+// Liste annonces
+$stmt = $pdo->query("SELECT a.*, u.pseudo, COUNT(i.id) as img_count 
+                     FROM annonces a 
+                     LEFT JOIN users u ON a.user_id = u.id 
+                     LEFT JOIN images i ON a.id = i.annonce_id 
+                     WHERE a.status='active' 
+                     GROUP BY a.id ORDER BY a.created_at DESC LIMIT 20");
+$annonces = $stmt->fetchAll();
+
+$isLogged = isset($_SESSION['user_id']);
+?>
+
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>BrainrotCenter - LeBonCoin pour Brainrots</title>
+    <link rel="stylesheet" href="assets/css/style.css">
+</head>
+<body>
+    <header>
+        <nav>
+            <a href="/" class="logo">BrainrotCenter</a>
+            <p class="tagline">LeBonCoin mais pour les brainrots</p>
+            
+            <ul class="nav-links">
+                <li><a href="/">Accueil</a></li>
+                <li><a href="?cat=Fortnite">Fortnite</a></li>
+                <li><a href="?cat=Roblox">Roblox</a></li>
+                <li><a href="deposer.php" class="btn">Déposer une annonce</a></li>
+                <?php if($isLogged): ?>
+                    <li><a href="profil.php">Mon compte</a></li>
+                <?php else: ?>
+                    <li><a href="login.php">Se connecter</a></li>
+                <?php endif; ?>
+            </ul>
+            
+            <div class="search-bar">
+                <input type="text" id="search" placeholder="Rechercher un brainrot...">
+                <button onclick="applyFilters()" class="btn">🔍</button>
+            </div>
+        </nav>
+    </header>
+
+    <div class="filter-bar">
+        <select id="cat-filter">
+            <option value="">Toutes catégories</option>
+            <option value="Fortnite">Fortnite</option>
+            <option value="Roblox">Roblox</option>
+        </select>
+        <input type="number" id="price-min" placeholder="Prix min" min="0">
+        <input type="number" id="price-max" placeholder="Prix max" min="0">
+        <select id="sort-filter">
+            <option value="date">Date récente</option>
+            <option value="price_asc">Prix croissant</option>
+            <option value="price_desc">Prix décroissant</option>
+        </select>
+        <button class="btn" onclick="applyFilters()">Filtrer</button>
+    </div>
+
+    <section class="annonces-grid">
+        <?php foreach($annonces as $a): 
+            $img = $pdo->query("SELECT path FROM images WHERE annonce_id = {$a['id']} ORDER BY `order` LIMIT 1")->fetchColumn() ?: 'assets/placeholder-brainrot.jpg';
+        ?>
+        <article class="annonce-card" data-id="<?= $a['id'] ?>" data-prix="<?= $a['price'] ?>" data-category="<?= $a['category'] ?>">
+            <img src="<?= htmlspecialchars($img) ?>" alt="<?= htmlspecialchars($a['title']) ?>" class="annonce-img">
+            <h3 class="annonce-title"><?= htmlspecialchars($a['title']) ?></h3>
+            <div class="annonce-meta">
+                <span><?= htmlspecialchars($a['category']) ?></span>
+                <span><?= $a['location'] ?: 'En ligne' ?></span>
+                <strong class="prix"><?= number_format($a['price'], 2) ?> €</strong>
+            </div>
+            <div style="padding:0 1rem 1rem;">
+                <button class="btn" onclick="viewAnnonce(<?= $a['id'] ?>)">Voir</button>
+                <button class="btn-outline" onclick="contactVendeur(<?= $a['id'] ?>)">Contacter</button>
+                <button class="btn-outline" onclick="signalAnnonce(<?= $a['id'] ?>)">Signaler</button>
+            </div>
+        </article>
+        <?php endforeach; ?>
+    </section>
+
+    <!-- Modal contacter -->
+    <div id="modal-contact" class="modal">
+        <div class="modal-content">
+            <h2>Contacter le vendeur</h2>
+            <textarea id="message-text" placeholder="Votre message..."></textarea>
+            <button class="btn" onclick="sendContact()">Envoyer</button>
+            <button class="close-modal">Fermer</button>
+        </div>
+    </div>
+
+    <script src="assets/js/app.js"></script>
+</body>
+</html>
